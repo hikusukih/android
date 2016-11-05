@@ -1,5 +1,8 @@
-/* ownCloud Android client application
- *   Copyright (C) 2012-2013 ownCloud Inc.
+/**
+ *   ownCloud Android client application
+ *
+ *   @author David A. Velasco
+ *   Copyright (C) 2016 ownCloud GmbH.
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License version 2,
@@ -18,7 +21,8 @@
 package com.owncloud.android.media;
 
 import android.accounts.Account;
-import android.app.Notification;
+import android.accounts.AccountManager;
+import android.accounts.OnAccountsUpdateListener;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
@@ -31,17 +35,21 @@ import android.media.MediaPlayer.OnErrorListener;
 import android.media.MediaPlayer.OnPreparedListener;
 import android.net.wifi.WifiManager;
 import android.net.wifi.WifiManager.WifiLock;
+import android.os.FileObserver;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.support.v7.app.NotificationCompat;
 import android.widget.Toast;
 
-import java.io.IOException;
-
 import com.owncloud.android.R;
+import com.owncloud.android.authentication.AccountUtils;
 import com.owncloud.android.datamodel.OCFile;
+import com.owncloud.android.lib.common.utils.Log_OC;
 import com.owncloud.android.ui.activity.FileActivity;
 import com.owncloud.android.ui.activity.FileDisplayActivity;
-import com.owncloud.android.utils.Log_OC;
+
+import java.io.File;
+import java.io.IOException;
 
 
 /**
@@ -49,19 +57,19 @@ import com.owncloud.android.utils.Log_OC;
  * 
  * Waits for Intents which signal the service to perform specific operations: Play, Pause,
  * Rewind, etc.
- * 
- * @author David A. Velasco
  */
 public class MediaService extends Service implements OnCompletionListener, OnPreparedListener,
                 OnErrorListener, AudioManager.OnAudioFocusChangeListener {
 
     private static final String TAG = MediaService.class.getSimpleName();
 
-    private static final String MY_PACKAGE = MediaService.class.getPackage() != null ? MediaService.class.getPackage().getName() : "com.owncloud.android.media";
+    private static final String MY_PACKAGE = MediaService.class.getPackage() != null ?
+            MediaService.class.getPackage().getName() : "com.owncloud.android.media";
     
     /// Intent actions that we are prepared to handle
     public static final String ACTION_PLAY_FILE = MY_PACKAGE + ".action.PLAY_FILE";
     public static final String ACTION_STOP_ALL = MY_PACKAGE + ".action.STOP_ALL";
+    public static final String ACTION_STOP_FILE = MY_PACKAGE + ".action.STOP_FILE";
 
     /// Keys to add extras to the action
     public static final String EXTRA_FILE = MY_PACKAGE + ".extra.FILE";
@@ -88,7 +96,10 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
     /** Reference to the system AudioManager */
     private AudioManager mAudioManager = null;
 
-    
+    /** Reference to the system AccountManager */
+    private AccountManager mAccountManager;
+
+
     /** Values to indicate the state of the service */
     enum State {
         STOPPED,
@@ -122,11 +133,13 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
 
     /** Notification to keep in the notification bar while a song is playing */
     private NotificationManager mNotificationManager;
-    private Notification mNotification = null;
 
     /** File being played */
     private OCFile mFile;
-    
+
+    /** Observer being notified if played file is deleted */
+    private MediaFileObserver mFileObserver = null;
+
     /** Account holding the file being played */
     private Account mAccount;
 
@@ -141,8 +154,9 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
 
     /** Control panel shown to the user to control the playback, to register through binding */
     private MediaControlView mMediaController;
-    
 
+    /** Notification builder to create notifications, new reuse way since Android 6 */
+    private NotificationCompat.Builder mNotificationBuilder;
     
     /**
      * Helper method to get an error message suitable to show to users for errors occurred in media playback,
@@ -160,7 +174,8 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
                 
         } else if (extra == MediaPlayer.MEDIA_ERROR_UNSUPPORTED) {
             /*  Added in API level 17
-                Bitstream is conforming to the related coding standard or file spec, but the media framework does not support the feature.
+                Bitstream is conforming to the related coding standard or file spec,
+                but the media framework does not support the feature.
                 Constant Value: -1010 (0xfffffc0e)
              */
             messageId = R.string.media_err_unsupported;
@@ -188,7 +203,8 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
 
         } else if (what == MediaPlayer.MEDIA_ERROR_NOT_VALID_FOR_PROGRESSIVE_PLAYBACK) {
             /*  Added in API level 3
-                The video is streamed and its container is not valid for progressive playback i.e the video's index (e.g moov atom) is not at the start of the file.
+                The video is streamed and its container is not valid for progressive playback i.e the video's index
+                (e.g moov atom) is not at the start of the file.
                 Constant Value: 200 (0x000000c8)
             */
             messageId = R.string.media_err_invalid_progressive_playback;
@@ -201,7 +217,8 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
             */
             /*  MediaPlayer.MEDIA_ERROR_SERVER_DIED)
                 Added in API level 1
-                Media server died. In this case, the application must release the MediaPlayer object and instantiate a new one.
+                Media server died. In this case, the application must release the MediaPlayer
+                object and instantiate a new one.
                 Constant Value: 100 (0x00000064) 
              */
             messageId = R.string.media_err_unknown;
@@ -225,8 +242,22 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
                 createWifiLock(WifiManager.WIFI_MODE_FULL, MEDIA_WIFI_LOCK_TAG);
 
         mNotificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        mNotificationBuilder = new NotificationCompat.Builder(this);
+        mNotificationBuilder.setColor(this.getResources().getColor(R.color.primary));
         mAudioManager = (AudioManager) getSystemService(AUDIO_SERVICE);
         mBinder = new MediaServiceBinder(this);
+
+        // add AccountsUpdatedListener
+        mAccountManager = AccountManager.get(this);
+        mAccountManager.addOnAccountsUpdatedListener(new OnAccountsUpdateListener() {
+            @Override
+            public void onAccountsUpdated(Account[] accounts) {
+                // stop playback if account of the played media files was removed
+                if (mAccount != null && !AccountUtils.exists(mAccount, MediaService.this)) {
+                    processStopRequest(false);
+                }
+            }
+        }, null, false);
     }
 
     
@@ -243,9 +274,18 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
             
         } else if (action.equals(ACTION_STOP_ALL)) {
             processStopRequest(true);
+        } else if(action.equals(ACTION_STOP_FILE)) {
+            processStopFileRequest(intent);
         }
 
         return START_NOT_STICKY; // don't want it to restart in case it's killed.
+    }
+
+    private void processStopFileRequest(Intent intent) {
+        OCFile file = intent.getExtras().getParcelable(EXTRA_FILE);
+        if(file != null && file.equals(mFile)) {
+            processStopRequest(true);
+        }
     }
 
 
@@ -285,7 +325,6 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
             mState = State.PLAYING;
             setUpAsForeground(String.format(getString(R.string.media_state_playing), mFile.getFileName()));
             configAndStartMediaPlayer();
-            
         }
     }
 
@@ -333,6 +372,7 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
         if (mState != State.PREPARING || force) {
             mState = State.STOPPED;
             mFile = null;
+            stopFileObserver();
             mAccount = null;
             releaseResources(true);
             giveUpAudioFocus();
@@ -443,6 +483,7 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
             createMediaPlayerIfNeeded();
             mPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
             String url = mFile.getStoragePath();
+            updateFileObserver(url);
             /* Streaming is not possible right now
             if (url == null || url.length() <= 0) {
                 url = AccountUtils.constructFullURLForAccount(this, mAccount) + mFile.getRemotePath();
@@ -468,27 +509,43 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
             
         } catch (SecurityException e) {
             Log_OC.e(TAG, "SecurityException playing " + mAccount.name + mFile.getRemotePath(), e);
-            Toast.makeText(this, String.format(getString(R.string.media_err_security_ex), mFile.getFileName()), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, String.format(getString(R.string.media_err_security_ex), mFile.getFileName()),
+                    Toast.LENGTH_LONG).show();
             processStopRequest(true);
             
         } catch (IOException e) {
             Log_OC.e(TAG, "IOException playing " + mAccount.name + mFile.getRemotePath(), e);
-            Toast.makeText(this, String.format(getString(R.string.media_err_io_ex), mFile.getFileName()), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, String.format(getString(R.string.media_err_io_ex), mFile.getFileName()),
+                    Toast.LENGTH_LONG).show();
             processStopRequest(true);
             
         } catch (IllegalStateException e) {
             Log_OC.e(TAG, "IllegalStateException " + mAccount.name + mFile.getRemotePath(), e);
-            Toast.makeText(this, String.format(getString(R.string.media_err_unexpected), mFile.getFileName()), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, String.format(getString(R.string.media_err_unexpected), mFile.getFileName()),
+                    Toast.LENGTH_LONG).show();
             processStopRequest(true);
             
         } catch (IllegalArgumentException e) {
             Log_OC.e(TAG, "IllegalArgumentException " + mAccount.name + mFile.getRemotePath(), e);
-            Toast.makeText(this, String.format(getString(R.string.media_err_unexpected), mFile.getFileName()), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, String.format(getString(R.string.media_err_unexpected), mFile.getFileName()),
+                    Toast.LENGTH_LONG).show();
             processStopRequest(true);
         }
     }
 
-    
+    private void updateFileObserver(String url) {
+        stopFileObserver();
+        mFileObserver = new MediaFileObserver(url);
+        mFileObserver.startWatching();
+    }
+
+    private void stopFileObserver() {
+        if (mFileObserver != null) {
+            mFileObserver.stopWatching();
+        }
+    }
+
+
     /** Called when media player is done playing current song. */
     public void onCompletion(MediaPlayer player) {
         Toast.makeText(this, String.format(getString(R.string.media_event_done, mFile.getFileName())), Toast.LENGTH_LONG).show();
@@ -531,22 +588,25 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
     /** 
      * Updates the status notification
      */
-    @SuppressWarnings("deprecation")
     private void updateNotification(String content) {
+        String ticker = String.format(getString(R.string.media_notif_ticker), getString(R.string.app_name));
+
         // TODO check if updating the Intent is really necessary
         Intent showDetailsIntent = new Intent(this, FileDisplayActivity.class);
         showDetailsIntent.putExtra(FileActivity.EXTRA_FILE, mFile);
         showDetailsIntent.putExtra(FileActivity.EXTRA_ACCOUNT, mAccount);
         showDetailsIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        mNotification.contentIntent = PendingIntent.getActivity(getApplicationContext(), 
-                                                                (int)System.currentTimeMillis(), 
-                                                                showDetailsIntent, 
-                                                                PendingIntent.FLAG_UPDATE_CURRENT);
-        mNotification.when = System.currentTimeMillis();
-        //mNotification.contentView.setTextViewText(R.id.status_text, content);
-        String ticker = String.format(getString(R.string.media_notif_ticker), getString(R.string.app_name));
-        mNotification.setLatestEventInfo(getApplicationContext(), ticker, content, mNotification.contentIntent);
-        mNotificationManager.notify(R.string.media_notif_ticker, mNotification);
+
+        mNotificationBuilder.setContentIntent(PendingIntent.getActivity(getApplicationContext(),
+                (int) System.currentTimeMillis(),
+                showDetailsIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT));
+        mNotificationBuilder.setWhen(System.currentTimeMillis());
+        mNotificationBuilder.setTicker(ticker);
+        mNotificationBuilder.setContentTitle(ticker);
+        mNotificationBuilder.setContentText(content);
+
+        mNotificationManager.notify(R.string.media_notif_ticker, mNotificationBuilder.build());
     }
 
     
@@ -557,35 +617,29 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
      * 
      * A notification must be created to keep the user aware of the existance of the service.
      */
-    @SuppressWarnings("deprecation")
     private void setUpAsForeground(String content) {
+        String ticker = String.format(getString(R.string.media_notif_ticker), getString(R.string.app_name));
+
         /// creates status notification
         // TODO put a progress bar to follow the playback progress
-        mNotification = new Notification();
-        mNotification.icon = android.R.drawable.ic_media_play;
+        mNotificationBuilder.setSmallIcon(R.drawable.ic_play_arrow);
         //mNotification.tickerText = text;
-        mNotification.when = System.currentTimeMillis();
-        mNotification.flags |= Notification.FLAG_ONGOING_EVENT;
-        //mNotification.contentView.setTextViewText(R.id.status_text, "ownCloud Music Player");     // NULL POINTER
-        //mNotification.contentView.setTextViewText(R.id.status_text, getString(R.string.downloader_download_in_progress_content));
-
+        mNotificationBuilder.setWhen(System.currentTimeMillis());
+        mNotificationBuilder.setOngoing(true);
         
         /// includes a pending intent in the notification showing the details view of the file
         Intent showDetailsIntent = new Intent(this, FileDisplayActivity.class);
         showDetailsIntent.putExtra(FileActivity.EXTRA_FILE, mFile);
         showDetailsIntent.putExtra(FileActivity.EXTRA_ACCOUNT, mAccount);
         showDetailsIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        mNotification.contentIntent = PendingIntent.getActivity(getApplicationContext(), 
-                                                                (int)System.currentTimeMillis(), 
-                                                                showDetailsIntent, 
-                                                                PendingIntent.FLAG_UPDATE_CURRENT);
-        
-        
-        //mNotificationManager.notify(R.string.downloader_download_in_progress_ticker, mNotification);
-        String ticker = String.format(getString(R.string.media_notif_ticker), getString(R.string.app_name));
-        mNotification.setLatestEventInfo(getApplicationContext(), ticker, content, mNotification.contentIntent);
-        startForeground(R.string.media_notif_ticker, mNotification);
-        
+        mNotificationBuilder.setContentIntent(PendingIntent.getActivity(getApplicationContext(),
+                (int) System.currentTimeMillis(),
+                showDetailsIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT));
+        mNotificationBuilder.setContentTitle(ticker);
+        mNotificationBuilder.setContentText(content);
+
+        startForeground(R.string.media_notif_ticker, mNotificationBuilder.build());
     }
 
     /**
@@ -638,6 +692,7 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
         mState = State.STOPPED;
         releaseResources(true);
         giveUpAudioFocus();
+        stopForeground(true);
         super.onDestroy();
     }
     
@@ -703,6 +758,25 @@ public class MediaService extends Service implements OnCompletionListener, OnPre
 
     protected MediaControlView getMediaController() {
         return mMediaController;
+    }
+
+    /**
+     * Observer monitoring the media file currently played and stopping the playback in case
+     * that it's deleted or moved away from its storage location.
+     */
+    private class MediaFileObserver extends FileObserver {
+
+        public MediaFileObserver(String path) {
+            super((new File(path)).getParent(), FileObserver.DELETE | FileObserver.MOVED_FROM);
+        }
+
+        @Override
+        public void onEvent(int event, String path) {
+            if (path != null && path.equals(mFile.getFileName())) {
+                Log_OC.d(TAG, "Media file deleted or moved out of sight, stopping playback");
+                processStopRequest(true);
+            }
+        }
     }
 
 }

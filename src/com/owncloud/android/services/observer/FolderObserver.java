@@ -1,5 +1,8 @@
-/* ownCloud Android client application
- *   Copyright (C) 2012-2014 ownCloud Inc.
+/**
+ *   ownCloud Android client application
+ *
+ *   @author David A. Velasco
+ *   Copyright (C) 2016 ownCloud GmbH.
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License version 2,
@@ -30,9 +33,9 @@ import com.owncloud.android.datamodel.FileDataStorageManager;
 import com.owncloud.android.datamodel.OCFile;
 import com.owncloud.android.lib.common.operations.RemoteOperationResult;
 import com.owncloud.android.lib.common.operations.RemoteOperationResult.ResultCode;
+import com.owncloud.android.lib.common.utils.Log_OC;
 import com.owncloud.android.operations.SynchronizeFileOperation;
 import com.owncloud.android.ui.activity.ConflictsResolveActivity;
-import com.owncloud.android.utils.Log_OC;
 
 /**
  * Observer watching a folder to request the synchronization of kept-in-sync files
@@ -46,8 +49,6 @@ import com.owncloud.android.utils.Log_OC;
  *  The second case requires to monitor the folder parent of the files, since a direct 
  *  {@link FileObserver} on it will not receive more events after the file is deleted to
  *  be replaced.
- * 
- * @author David A. Velasco
  */
 public class FolderObserver extends FileObserver {
 

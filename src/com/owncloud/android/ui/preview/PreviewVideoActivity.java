@@ -1,5 +1,8 @@
-/* ownCloud Android client application
- *   Copyright (C) 2012-2013 ownCloud Inc.
+/**
+ *   ownCloud Android client application
+ *
+ *   @author David A. Velasco
+ *   Copyright (C) 2016 ownCloud GmbH.
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License version 2,
@@ -21,10 +24,9 @@ import com.owncloud.android.R;
 import com.owncloud.android.datamodel.OCFile;
 import com.owncloud.android.media.MediaService;
 import com.owncloud.android.ui.activity.FileActivity;
-import com.owncloud.android.utils.Log_OC;
 
 import android.accounts.Account;
-import android.app.AlertDialog;
+import android.support.v7.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.media.MediaPlayer;
@@ -38,6 +40,7 @@ import android.widget.VideoView;
 
 import com.owncloud.android.lib.common.accounts.AccountUtils;
 import com.owncloud.android.lib.common.accounts.AccountUtils.AccountNotFoundException;
+import com.owncloud.android.lib.common.utils.Log_OC;
 
 /**
  *  Activity implementing a basic video player.
@@ -45,9 +48,7 @@ import com.owncloud.android.lib.common.accounts.AccountUtils.AccountNotFoundExce
  *  Used as an utility to preview video files contained in an ownCloud account.
  *  
  *  Currently, it always plays in landscape mode, full screen. When the playback ends,
- *  the activity is finished. 
- *  
- *  @author David A. Velasco
+ *  the activity is finished.
  */
 public class PreviewVideoActivity extends FileActivity implements OnCompletionListener, OnPreparedListener, OnErrorListener {
 
@@ -77,7 +78,7 @@ public class PreviewVideoActivity extends FileActivity implements OnCompletionLi
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        Log_OC.e(TAG, "ACTIVITY\t\tonCreate");
+        Log_OC.v(TAG, "onCreate");
         
         setContentView(R.layout.video_layout);
     
@@ -109,7 +110,6 @@ public class PreviewVideoActivity extends FileActivity implements OnCompletionLi
     @Override
     public void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
-        Log_OC.e(TAG, "ACTIVITY\t\tonSaveInstanceState");
         outState.putInt(PreviewVideoActivity.EXTRA_START_POSITION, mVideoPlayer.getCurrentPosition());
         outState.putBoolean(PreviewVideoActivity.EXTRA_AUTOPLAY , mVideoPlayer.isPlaying());
     }
@@ -117,11 +117,12 @@ public class PreviewVideoActivity extends FileActivity implements OnCompletionLi
     
     @Override
     public void onBackPressed() {
-        Log_OC.e(TAG, "ACTIVTIY\t\tonBackPressed");
+        Log_OC.v(TAG, "onBackPressed");
         Intent i = new Intent();
         i.putExtra(EXTRA_AUTOPLAY, mVideoPlayer.isPlaying());
         i.putExtra(EXTRA_START_POSITION, mVideoPlayer.getCurrentPosition());
         setResult(RESULT_OK, i);
+        mVideoPlayer.stopPlayback();
         super.onBackPressed();
     }
 
@@ -135,7 +136,7 @@ public class PreviewVideoActivity extends FileActivity implements OnCompletionLi
      */
     @Override
     public void onPrepared(MediaPlayer mp) {
-        Log_OC.e(TAG, "ACTIVITY\t\tonPrepare");
+        Log_OC.v(TAG, "onPrepare");
         mVideoPlayer.seekTo(mSavedPlaybackPosition);
         if (mAutoplay) { 
             mVideoPlayer.start();
@@ -203,8 +204,8 @@ public class PreviewVideoActivity extends FileActivity implements OnCompletionLi
             file = getStorageManager().getFileById(file.getFileId()); 
             if (file != null) {
                 if (file.isDown()) {
-                    mVideoPlayer.setVideoPath(file.getStoragePath());
-                    
+                    mVideoPlayer.setVideoURI(file.getStorageUri());
+
                 } else {
                     // not working yet
                     String url;
@@ -215,13 +216,13 @@ public class PreviewVideoActivity extends FileActivity implements OnCompletionLi
                         onError(null, MediaService.OC_MEDIA_ERROR, R.string.media_err_no_account);
                     }
                 }
-                
+
                 // create and prepare control panel for the user
                 mMediaController = new MediaController(this);
                 mMediaController.setMediaPlayer(mVideoPlayer);
                 mMediaController.setAnchorView(mVideoPlayer);
                 mVideoPlayer.setMediaController(mMediaController);
-                
+
             } else {
                 finish();
             }

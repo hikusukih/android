@@ -1,5 +1,8 @@
-/* ownCloud Android client application
- *   Copyright (C) 2012-2013 ownCloud Inc.
+/**
+ *   ownCloud Android client application
+ *
+ *   @author David A. Velasco
+ *   Copyright (C) 2016 ownCloud GmbH.
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License version 2,
@@ -25,7 +28,7 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 
 import com.owncloud.android.lib.common.network.NetworkUtils;
-import com.owncloud.android.utils.Log_OC;
+import com.owncloud.android.lib.common.utils.Log_OC;
 
 import android.content.Context;
 import android.graphics.Bitmap;
@@ -50,8 +53,6 @@ import android.webkit.WebViewClient;
  * 
  * Assumes that the single-sign-on is kept thanks to a cookie set at the end of the
  * authentication process.
- *   
- * @author David A. Velasco
  */
 public class SsoWebViewClient extends WebViewClient {
         
@@ -66,6 +67,7 @@ public class SsoWebViewClient extends WebViewClient {
     private WeakReference<SsoWebViewClientListener> mListenerRef;
     private String mTargetUrl;
     private String mLastReloadedUrlAtError;
+
     
     public SsoWebViewClient (Context context, Handler listenerHandler, SsoWebViewClientListener listener) {
         mContext = context;
@@ -86,6 +88,7 @@ public class SsoWebViewClient extends WebViewClient {
     @Override
     public void onPageStarted (WebView view, String url, Bitmap favicon) {
         Log_OC.d(TAG, "onPageStarted : " + url);
+        view.clearCache(true);
         super.onPageStarted(view, url, favicon);
     }
     
@@ -122,7 +125,7 @@ public class SsoWebViewClient extends WebViewClient {
             view.setVisibility(View.GONE);
             CookieManager cookieManager = CookieManager.getInstance();
             final String cookies = cookieManager.getCookie(url);
-            Log_OC.d(TAG, "Cookies: " + cookies);
+            //Log_OC.d(TAG, "Cookies: " + cookies);
             if (mListenerHandler != null && mListenerRef != null) {
                 // this is good idea because onPageFinished is not running in the UI thread
                 mListenerHandler.post(new Runnable() {
@@ -139,22 +142,14 @@ public class SsoWebViewClient extends WebViewClient {
         } 
     }
     
-    
-    @Override
-    public void doUpdateVisitedHistory (WebView view, String url, boolean isReload) {
-        Log_OC.d(TAG, "doUpdateVisitedHistory : " + url);
-    }
-    
     @Override
     public void onReceivedSslError (final WebView view, final SslErrorHandler handler, SslError error) {
-        Log_OC.d(TAG, "onReceivedSslError : " + error);
+        Log_OC.e(TAG, "onReceivedSslError : " + error);
         // Test 1
         X509Certificate x509Certificate = getX509CertificateFromError(error);
         boolean isKnownServer = false;
         
         if (x509Certificate != null) {
-            Log_OC.d(TAG, "------>>>>> x509Certificate " + x509Certificate.toString());
-            
             try {
                 isKnownServer = NetworkUtils.isCertInKnownServersStore((Certificate) x509Certificate, mContext);
             } catch (Exception e) {
@@ -195,39 +190,8 @@ public class SsoWebViewClient extends WebViewClient {
     @Override
     public void onReceivedHttpAuthRequest (WebView view, HttpAuthHandler handler, String host, String realm) {
         Log_OC.d(TAG, "onReceivedHttpAuthRequest : " + host);
-    }
 
-    @Override
-    public WebResourceResponse shouldInterceptRequest (WebView view, String url) {
-        Log_OC.d(TAG, "shouldInterceptRequest : " + url);
-        return null;
-    }
-    
-    @Override
-    public void onLoadResource (WebView view, String url) {
-        Log_OC.d(TAG, "onLoadResource : " + url);   
-    }
-    
-    @Override
-    public void onReceivedLoginRequest (WebView view, String realm, String account, String args) {
-        Log_OC.d(TAG, "onReceivedLoginRequest : " + realm + ", " + account + ", " + args);
-    }
-    
-    @Override
-    public void onScaleChanged (WebView view, float oldScale, float newScale) {
-        Log_OC.d(TAG, "onScaleChanged : " + oldScale + " -> " + newScale);
-        super.onScaleChanged(view, oldScale, newScale);
-    }
-
-    @Override
-    public void onUnhandledKeyEvent (WebView view, KeyEvent event) {
-        Log_OC.d(TAG, "onUnhandledKeyEvent : " + event);
-    }
-    
-    @Override
-    public boolean shouldOverrideKeyEvent (WebView view, KeyEvent event) {
-        Log_OC.d(TAG, "shouldOverrideKeyEvent : " + event);
-        return false;
+        ((AuthenticatorActivity)mContext).createAuthenticationDialog(view, handler);
     }
 
 }

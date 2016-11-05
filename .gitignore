@@ -10,6 +10,8 @@
 
 # generated files
 bin/
+build/
+*.iml
 gen/
 target/
 
@@ -19,6 +21,7 @@ oc_workaround/local.properties
 oc_framework/local.properties
 oc_framework-test-project/local.properties
 tests/local.properties
+lint.xml
 
 # Mac .DS_Store files
 .DS_Store
@@ -30,5 +33,8 @@ oc_framework/proguard-project.txt
 oc_framework-test-project/proguard-project.txt
 tests/proguard-project.txt
 
-# Should not be commited inside this repo:
-actionbarsherlock/
+# Android Studio and Gradle specific entries
+.gradle
+.idea
+*.iml
+build

@@ -1,5 +1,8 @@
-/* ownCloud Android client application
- *   Copyright (C) 2012-2013  ownCloud Inc.
+/**
+ *   ownCloud Android client application
+ *
+ *   @author David A. Velasco
+ *   Copyright (C) 2016 ownCloud GmbH.
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License version 2,
@@ -18,12 +21,10 @@ package com.owncloud.android.ui.preview;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.Vector;
-
-import com.owncloud.android.datamodel.OCFile;
-import com.owncloud.android.ui.fragment.FileFragment;
 
 import android.accounts.Account;
 import android.support.v4.app.Fragment;
@@ -32,15 +33,20 @@ import android.support.v4.app.FragmentStatePagerAdapter;
 import android.view.ViewGroup;
 
 import com.owncloud.android.datamodel.FileDataStorageManager;
+import com.owncloud.android.datamodel.OCFile;
+import com.owncloud.android.files.services.FileDownloader;
+import com.owncloud.android.lib.common.utils.Log_OC;
+import com.owncloud.android.ui.fragment.FileFragment;
+import com.owncloud.android.utils.FileStorageUtils;
 
 /**
- * Adapter class that provides Fragment instances  
- * 
- * @author David A. Velasco
+ * Adapter class that provides Fragment instances
  */
 //public class PreviewImagePagerAdapter extends PagerAdapter {
 public class PreviewImagePagerAdapter extends FragmentStatePagerAdapter {
-    
+
+    private static final String TAG = PreviewImagePagerAdapter.class.getCanonicalName();
+
     private Vector<OCFile> mImageFiles;
     private Account mAccount;
     private Set<Object> mObsoleteFragments;
@@ -53,11 +59,14 @@ public class PreviewImagePagerAdapter extends FragmentStatePagerAdapter {
     /**
      * Constructor.
      * 
-     * @param fragmentManager   {@link FragmentManager} instance that will handle the {@link Fragment}s provided by the adapter. 
+     * @param fragmentManager   {@link FragmentManager} instance that will handle
+     *                          the {@link Fragment}s provided by the adapter.
      * @param parentFolder      Folder where images will be searched for.
      * @param storageManager    Bridge to database.
      */
-    public PreviewImagePagerAdapter(FragmentManager fragmentManager, OCFile parentFolder, Account account, FileDataStorageManager storageManager) {
+    public PreviewImagePagerAdapter(FragmentManager fragmentManager, OCFile parentFolder,
+                                    Account account, FileDataStorageManager storageManager /*,
+                                    boolean onlyOnDevice*/) {
         super(fragmentManager);
         
         if (fragmentManager == null) {
@@ -72,14 +81,17 @@ public class PreviewImagePagerAdapter extends FragmentStatePagerAdapter {
 
         mAccount = account;
         mStorageManager = storageManager;
-        mImageFiles = mStorageManager.getFolderImages(parentFolder); 
-        mObsoleteFragments = new HashSet<Object>();
-        mObsoletePositions = new HashSet<Integer>();
-        mDownloadErrors = new HashSet<Integer>();
+        // TODO Enable when "On Device" is recovered ?
+        mImageFiles = mStorageManager.getFolderImages(parentFolder/*, false*/);
+        
+        mImageFiles = FileStorageUtils.sortFolder(mImageFiles);
+        
+        mObsoleteFragments = new HashSet<>();
+        mObsoletePositions = new HashSet<>();
+        mDownloadErrors = new HashSet<>();
         //mFragmentManager = fragmentManager;
-        mCachedFragments = new HashMap<Integer, FileFragment>();
+        mCachedFragments = new HashMap<>();
     }
-
     
     /**
      * Returns the image files handled by the adapter.
@@ -93,19 +105,25 @@ public class PreviewImagePagerAdapter extends FragmentStatePagerAdapter {
     
     public Fragment getItem(int i) {
         OCFile file = mImageFiles.get(i);
-        Fragment fragment = null;
+        Fragment fragment;
         if (file.isDown()) {
-            fragment = new PreviewImageFragment(file, mAccount, mObsoletePositions.contains(Integer.valueOf(i)));
+            fragment = PreviewImageFragment.newInstance(
+                file,
+                mAccount,
+                mObsoletePositions.contains(i)
+            );
             
-        } else if (mDownloadErrors.contains(Integer.valueOf(i))) {
-            fragment = new FileDownloadFragment(file, mAccount, true);
+        } else if (mDownloadErrors.contains(i)) {
+            fragment = FileDownloadFragment.newInstance(file, mAccount, true);
             ((FileDownloadFragment)fragment).setError(true);
-            mDownloadErrors.remove(Integer.valueOf(i));
+            mDownloadErrors.remove(i);
             
         } else {
-            fragment = new FileDownloadFragment(file, mAccount, mObsoletePositions.contains(Integer.valueOf(i)));
+            fragment = FileDownloadFragment.newInstance(
+                    file, mAccount, mObsoletePositions.contains(i)
+            );
         }
-        mObsoletePositions.remove(Integer.valueOf(i));
+        mObsoletePositions.remove(i);
         return fragment;
     }
 
@@ -124,30 +142,38 @@ public class PreviewImagePagerAdapter extends FragmentStatePagerAdapter {
     }
 
     
-    public void updateFile(int position, OCFile file) {
-        FileFragment fragmentToUpdate = mCachedFragments.get(Integer.valueOf(position));
+    private void updateFile(int position, OCFile file) {
+        FileFragment fragmentToUpdate = mCachedFragments.get(position);
         if (fragmentToUpdate != null) {
             mObsoleteFragments.add(fragmentToUpdate);
         }
-        mObsoletePositions.add(Integer.valueOf(position));
+        mObsoletePositions.add(position);
         mImageFiles.set(position, file);
     }
     
     
-    public void updateWithDownloadError(int position) {
-        FileFragment fragmentToUpdate = mCachedFragments.get(Integer.valueOf(position));
+    private void updateWithDownloadError(int position) {
+        FileFragment fragmentToUpdate = mCachedFragments.get(position);
         if (fragmentToUpdate != null) {
             mObsoleteFragments.add(fragmentToUpdate);
         }
-        mDownloadErrors.add(Integer.valueOf(position));
+        mDownloadErrors.add(position);
     }
-    
+
+    public void onTransferServiceConnected() {
+        for (FileFragment fragmentToUpdate : mCachedFragments.values()){
+            if (fragmentToUpdate != null) {
+                fragmentToUpdate.onTransferServiceConnected();
+            }
+        }
+    }
+
     public void clearErrorAt(int position) {
-        FileFragment fragmentToUpdate = mCachedFragments.get(Integer.valueOf(position));
+        FileFragment fragmentToUpdate = mCachedFragments.get(position);
         if (fragmentToUpdate != null) {
             mObsoleteFragments.add(fragmentToUpdate);
         }
-        mDownloadErrors.remove(Integer.valueOf(position));
+        mDownloadErrors.remove(position);
     }
     
     
@@ -164,19 +190,55 @@ public class PreviewImagePagerAdapter extends FragmentStatePagerAdapter {
     @Override
     public Object instantiateItem(ViewGroup container, int position) {
         Object fragment = super.instantiateItem(container, position);
-        mCachedFragments.put(Integer.valueOf(position), (FileFragment)fragment);
+        mCachedFragments.put(position, (FileFragment)fragment);
         return fragment;
     }
     
     @Override
     public void destroyItem(ViewGroup container, int position, Object object) {
-       mCachedFragments.remove(Integer.valueOf(position));
+       mCachedFragments.remove(position);
        super.destroyItem(container, position, object);
     }
 
 
     public boolean pendingErrorAt(int position) {
-        return mDownloadErrors.contains(Integer.valueOf(position));
+        return mDownloadErrors.contains(position);
+    }
+
+    /**
+     * Reset the image zoom to default value for each CachedFragments
+     */
+    public void resetZoom() {
+        Iterator<FileFragment> entries = mCachedFragments.values().iterator();
+        while (entries.hasNext()) {
+        FileFragment fileFragment = entries.next();
+            if (fileFragment instanceof PreviewImageFragment) {
+                ((PreviewImageFragment) fileFragment).getImageView().resetZoom();
+            }
+        }
+    }
+
+    public void onDownloadEvent(OCFile file, String action, boolean success) {
+        int position = getFilePosition(file);
+        if (position >= 0) {
+            if (action.equals(FileDownloader.getDownloadFinishMessage())) {
+                if (success) {
+                    updateFile(position, file);
+
+                } else {
+                    updateWithDownloadError(position);
+                }
+            }
+            FileFragment fragment = mCachedFragments.get(position);
+            if (fragment instanceof FileDownloadFragment) {
+                // trigger the creation of new PreviewImageFragment to replace current FileDownloadFragment
+                notifyDataSetChanged();
+            } else {
+                fragment.onSyncEvent(action, success, null);
+            }
+        } else {
+            Log_OC.d(TAG, "Download finished, but the fragment is offscreen");
+        }
     }
 
     /* -*
@@ -186,17 +248,17 @@ public class PreviewImagePagerAdapter extends FragmentStatePagerAdapter {
      *- /
     @Override
     public void startUpdate(ViewGroup container) {
-        Log.e(TAG, "** startUpdate");
+        Log_OC.e(TAG, "** startUpdate");
     }
 
     @Override
     public Object instantiateItem(ViewGroup container, int position) {
-        Log.e(TAG, "** instantiateItem " + position);
+        Log_OC.e(TAG, "** instantiateItem " + position);
         
         if (mFragments.size() > position) {
             Fragment fragment = mFragments.get(position);
             if (fragment != null) {
-                Log.e(TAG, "** \t returning cached item");
+                Log_OC.e(TAG, "** \t returning cached item");
                 return fragment;
             }
         }
@@ -222,7 +284,7 @@ public class PreviewImagePagerAdapter extends FragmentStatePagerAdapter {
         }
         fragment.setMenuVisibility(false);
         mFragments.set(position, fragment);
-        //Log.e(TAG, "** \t adding fragment at position " + position + ", containerId " + container.getId());
+        //Log_OC.e(TAG, "** \t adding fragment at position " + position + ", containerId " + container.getId());
         mCurTransaction.add(container.getId(), fragment);
 
         return fragment;
@@ -230,13 +292,13 @@ public class PreviewImagePagerAdapter extends FragmentStatePagerAdapter {
 
     @Override
     public void destroyItem(ViewGroup container, int position, Object object) {
-        Log.e(TAG, "** destroyItem " + position);
+        Log_OC.e(TAG, "** destroyItem " + position);
         Fragment fragment = (Fragment)object;
         
         if (mCurTransaction == null) {
             mCurTransaction = mFragmentManager.beginTransaction();
         }
-        Log.e(TAG, "** \t removing fragment at position " + position);
+        Log_OC.e(TAG, "** \t removing fragment at position " + position);
         while (mSavedState.size() <= position) {
             mSavedState.add(null);
         }
@@ -262,13 +324,13 @@ public class PreviewImagePagerAdapter extends FragmentStatePagerAdapter {
 
     @Override
     public void finishUpdate(ViewGroup container) {
-        Log.e(TAG, "** finishUpdate (start)");
+        Log_OC.e(TAG, "** finishUpdate (start)");
         if (mCurTransaction != null) {
             mCurTransaction.commitAllowingStateLoss();
             mCurTransaction = null;
             mFragmentManager.executePendingTransactions();
         }
-        Log.e(TAG, "** finishUpdate (end)");
+        Log_OC.e(TAG, "** finishUpdate (end)");
     }
 
     @Override
@@ -323,7 +385,7 @@ public class PreviewImagePagerAdapter extends FragmentStatePagerAdapter {
                         f.setMenuVisibility(false);
                         mFragments.set(index, f);
                     } else {
-                        Log.w(TAG, "Bad fragment at key " + key);
+                        Log_OC.w(TAG, "Bad fragment at key " + key);
                     }
                 }
             }

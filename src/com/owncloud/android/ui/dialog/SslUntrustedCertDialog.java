@@ -1,5 +1,9 @@
-/* ownCloud Android client application
- *   Copyright (C) 2012-2014 ownCloud Inc.
+/**
+ *   ownCloud Android client application
+ *
+ *   @author masensio
+ *   @author David A. Velasco
+ *   Copyright (C) 2016 ownCloud GmbH.
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License version 2,
@@ -24,6 +28,7 @@ import android.app.Activity;
 import android.app.Dialog;
 import android.net.http.SslError;
 import android.os.Bundle;
+import android.support.v4.app.DialogFragment;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -32,27 +37,23 @@ import android.view.View.OnClickListener;
 import android.webkit.SslErrorHandler;
 import android.widget.Button;
 
-import com.actionbarsherlock.app.SherlockDialogFragment;
 import com.owncloud.android.R;
 import com.owncloud.android.lib.common.network.CertificateCombinedException;
 import com.owncloud.android.lib.common.network.NetworkUtils;
+import com.owncloud.android.lib.common.utils.Log_OC;
 import com.owncloud.android.ui.adapter.CertificateCombinedExceptionViewAdapter;
 import com.owncloud.android.ui.adapter.SslCertificateViewAdapter;
 import com.owncloud.android.ui.adapter.SslErrorViewAdapter;
 import com.owncloud.android.ui.adapter.X509CertificateViewAdapter;
-import com.owncloud.android.utils.Log_OC;
 
 /**
  * Dialog to show information about an untrusted certificate and allow the user
  * to decide trust on it or not.
  * 
  * Abstract implementation of common functionality for different dialogs that
- * get the information about the error and the certificate from different classes. 
- * 
- * @author masensio
- * @author David A. Velasco
+ * get the information about the error and the certificate from different classes.
  */
-public class SslUntrustedCertDialog extends SherlockDialogFragment {
+public class SslUntrustedCertDialog extends DialogFragment {
     
     private final static String TAG = SslUntrustedCertDialog.class.getSimpleName();
     
@@ -191,7 +192,7 @@ public class SslUntrustedCertDialog extends SherlockDialogFragment {
             if (mHandler != null) {
                 mHandler.cancel();
             }
-            ((OnSslUntrustedCertListener)getSherlockActivity()).onCancelCertificate();
+            ((OnSslUntrustedCertListener)getActivity()).onCancelCertificate();
         }
     }
     
@@ -205,7 +206,7 @@ public class SslUntrustedCertDialog extends SherlockDialogFragment {
                 mHandler.proceed();
             }
             if (m509Certificate != null) {
-                Activity activity = getSherlockActivity();
+                Activity activity = getActivity();
                 try {
                     NetworkUtils.addCertToKnownServersStore(m509Certificate, activity);   // TODO make this asynchronously, it can take some time
                     ((OnSslUntrustedCertListener)activity).onSavedCertificate();
